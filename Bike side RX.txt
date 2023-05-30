@@ -1,0 +1,219 @@
+/*
+   RF|Arduino
+   Data - 11
+
+   GPS|Arduino
+   Rx- 3
+   Tx- 4
+
+   GSM|Arduino
+   Tx- 6
+   Rx- 7
+
+   Relay|Arduino
+   Output Pin- 3
+*/
+
+#include <RH_ASK.h>
+#include <SPI.h>
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(A0, A1, A2, A3, A4, A5);
+
+static const uint32_t GPSBaud = 9600;
+
+RH_ASK rf_driver;
+
+TinyGPSPlus gps;
+
+SoftwareSerial GPS(4, 3);
+SoftwareSerial GSMModule(6, 7);
+
+const unsigned int RECEIVE_TIMEOUT = 500; // receive timeout in milliseconds
+
+const int relayPin = 5;
+
+void setup() {
+  delay(1000); // Wait for the receiver to settle down
+  pinMode(relayPin, OUTPUT);
+  rf_driver.init();
+//  Serial.begin(9600);
+  GPS.begin(GPSBaud);
+  GSMModule.begin(9600);
+  lcd.begin(16, 2);
+  Serial.println("Receiver begin...");
+  printOnLcd("Accident SOS System");
+}
+
+void(* resetFunc) (void) = 0; //declare reset function @ address 0
+
+void loop()
+{
+  String message = receiveMessage();
+  if (message != "") {
+    analyseData(message.toInt());
+  }
+}
+
+
+void analyseData(int receivedData) {
+  switch (receivedData) {
+    case 0:
+      //      Serial.println("Not Ready");
+      printOnLcd("System Not Ready");
+      controlRelay("OFF");
+      break;
+    case 1:
+      //      Serial.println("Ready");
+      printOnLcd("System Ready");
+      controlRelay("ON");
+      break;
+    case 2:
+      //      Serial.println("Accident");
+      printOnLcd("Accident Occured");
+      controlRelay("OFF");
+      String locationData = readGPS();
+      sendSMS(locationData);
+      delay(500);
+      printOnLcd("Location: " + locationData);
+      delay(8000);
+      printOnLcd("SMS Sent to: 7351659365");
+      delay(2000);
+      printOnLcd("AND 6397294494");
+      delay(2000);
+      resetFunc(); //call reset
+      break;
+  }
+}
+
+
+String readGPS() {
+  //  String locationData = "30.3165,78.0322";
+  String locationData = "";
+  if (GPS.available() > 0) {
+    gps.encode(GPS.read());
+    locationData = (gps.location.lat(), 6) + ',' + (gps.location.lng(), 6);
+    if (locationData == "") {
+      locationData = "30.2686,77.9948";
+      return locationData;
+    }
+    else {
+      return locationData;
+    }
+  }
+  else {
+    locationData = "30.2686,77.9948";
+    return locationData;
+  }
+}
+
+
+void controlRelay(String status) {
+  if (status == "ON") {
+    digitalWrite(relayPin, HIGH);
+  }
+  else if (status == "OFF") {
+    digitalWrite(relayPin, LOW);
+  }
+}
+
+
+void sendSMS(String locationData) {
+  GSMModule.println("AT");    //To send SMS in Text Mode
+  delay(500);
+  GSMModule.println("AT+CMGF=1");    //To send SMS in Text Mode
+  delay(500);
+  GSMModule.println("AT+CMGS=\"+917351659365\"\r"); // change to the phone number you using
+  delay(500);
+  GSMModule.print("Accident Happened at ");
+  GSMModule.print("http://www.google.com/maps/place/" + locationData);
+  delay(500);
+  GSMModule.print((char)26);// (required according to the datasheet)
+  delay(500);
+  GSMModule.println();
+  delay(5000);
+  GSMModule.println("AT");    //To send SMS in Text Mode
+  delay(500);
+  GSMModule.println("AT+CMGF=1");    //To send SMS in Text Mode
+  delay(500);
+  GSMModule.println("AT+CMGS=\"+916397294494\"\r"); // change to the phone number you using
+  delay(500);
+  GSMModule.print("Accident Happened at ");
+  GSMModule.print("http://www.google.com/maps/place/" + locationData);
+  delay(500);
+  GSMModule.print((char)26);// (required according to the datasheet)
+  delay(500);
+  GSMModule.println();
+}
+
+
+String receiveMessage()
+{
+  uint8_t buflen = RH_ASK_MAX_MESSAGE_LEN;
+  uint8_t* buf = new uint8_t[buflen];
+  uint8_t len = buflen;
+
+  bool received = false;
+  unsigned long startTime = millis();
+  while (millis() - startTime < RECEIVE_TIMEOUT && !received) {
+    received = rf_driver.recv(buf, &len);
+    if (received) {
+      String receivedData((char*)buf);
+      delete[] buf; // free the dynamically allocated memory
+      return receivedData;
+    }
+  }
+  delete[] buf; // free the dynamically allocated memory
+  return "";
+}
+
+//void printOnLcd(String message) {
+//  int messageLength = message.length();
+//  int padding = (16 - messageLength) / 2;
+//  lcd.clear();
+//  lcd.setCursor(padding, 0);
+//  lcd.print(message);
+//}
+
+void printOnLcd(String message) {
+  int lcdWidth = 16;
+  int messageLength = message.length();
+
+  if (messageLength <= lcdWidth) {
+    // message fits on one line
+    int padding = (lcdWidth - messageLength) / 2;
+    lcd.clear();
+    lcd.setCursor(padding, 0);
+    lcd.print(message);
+  } else {
+    // message needs to be split onto two lines
+    int splitIndex = -1;
+    for (int i = lcdWidth - 1; i >= 0; i--) {
+      if (message.charAt(i) == ' ') {
+        splitIndex = i;
+        break;
+      }
+    }
+    if (splitIndex == -1) {
+      // no space character found, split at 16th character
+      splitIndex = lcdWidth;
+    }
+
+    String firstLine = message.substring(0, splitIndex);
+    String secondLine = message.substring(splitIndex + 1);
+
+    int firstLineLength = firstLine.length();
+    int secondLineLength = secondLine.length();
+
+    int firstLinePadding = (lcdWidth - firstLineLength) / 2;
+    int secondLinePadding = (lcdWidth - secondLineLength) / 2;
+
+    lcd.clear();
+    lcd.setCursor(firstLinePadding, 0);
+    lcd.print(firstLine);
+    lcd.setCursor(secondLinePadding, 1);
+    lcd.print(secondLine);
+  }
+}

@@ -1,0 +1,55 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_MPU6050.h>
+
+Adafruit_MPU6050 mpu;
+
+const float ALPHA = 0.9; // Complementary filter coefficient
+unsigned long prevTime = 0;
+unsigned long lastWarningTime = 0;
+const unsigned long DEBOUNCE_INTERVAL = 1000; // Debounce interval in milliseconds
+
+void setup() {
+  Serial.begin(9600);
+
+  if (!mpu.begin()) {
+    Serial.println("Failed to initialize MPU6050!");
+    while (1);
+  }
+}
+
+void loop() {
+  sensors_event_t accelEvent, gyroEvent;
+
+  mpu.getAccelerometerSensor()->getEvent(&accelEvent);
+  mpu.getGyroSensor()->getEvent(&gyroEvent);
+
+  float accelX = accelEvent.acceleration.x;
+  float accelY = accelEvent.acceleration.y;
+  float accelZ = accelEvent.acceleration.z;
+
+  float gyroX = gyroEvent.gyro.x;
+  float gyroY = gyroEvent.gyro.y;
+  float gyroZ = gyroEvent.gyro.z;
+
+  // Apply complementary filter to combine gyro and accel data
+  float angleX = ALPHA * (angleX + gyroX * (gyroEvent.timestamp - prevTime) / 1000000.0) + (1 - ALPHA) * atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0 / PI;
+  float angleY = ALPHA * (angleY + gyroY * (gyroEvent.timestamp - prevTime) / 1000000.0) + (1 - ALPHA) * atan2(accelY, sqrt(accelX * accelX + accelZ * accelZ)) * 180.0 / PI;
+
+  prevTime = gyroEvent.timestamp;
+
+  // Calculate total acceleration
+  float accelTotal = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
+
+  // Check for significant changes in orientation or acceleration that could indicate an accident
+  if (abs(angleX) > 100 || abs(angleY) > 100 || accelTotal > 32) {
+    // Check if the debounce interval has elapsed since the last warning
+    if (millis() - lastWarningTime >= DEBOUNCE_INTERVAL) {
+      Serial.println("Accident detected!");
+      lastWarningTime = millis(); // Update the last warning time
+      // Add code here to take appropriate action, such as sending an alert message
+    }
+  }
+
+  delay(10); // Limit loop frequency to prevent excessive CPU usage
+}
